@@ -1,0 +1,419 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from pymongo import MongoClient
+from config import Config
+import bcrypt
+import os
+
+
+app = Flask(__name__)
+CORS(app)
+
+# MongoDB connection
+client = MongoClient(Config.MONGO_URI)
+db = client.get_database()   # auto from URI
+users = db["users"]
+
+contacts = db["contacts"]
+
+# ================= SIGNUP =================
+@app.route("/signup", methods=["POST"])
+def signup():
+    data = request.get_json() or {}
+
+    name = data.get("name", "").strip()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "").strip()
+
+    if not name or not email or len(password) < 6:
+        return jsonify({"error": "Invalid data"}), 400
+
+    if users.find_one({"email": email}):
+        return jsonify({"error": "User already exists"}), 400
+
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+    users.insert_one({
+        "name": name,
+        "email": email,
+        "password": hashed
+    })
+
+    return jsonify({"message": "Signup successful"}), 201
+
+
+# ================= LOGIN =================
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json() or {}
+
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "").strip()
+
+    user = users.find_one({"email": email})
+
+    if not user:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    if not bcrypt.checkpw(password.encode("utf-8"), user["password"]):
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    return jsonify({
+        "message": "Login success",
+        "user": {
+            "name": user["name"],
+            "email": user["email"]
+        },
+        "token": "demo-token"  # frontend needs this
+    })
+
+
+
+# ================= PROFILE SAVE =================
+@app.route("/profile", methods=["POST"])
+def save_profile():
+    data = request.get_json() or {}
+
+    email = data.get("email")
+
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+
+    profile_data = {
+        "phone": data.get("phone"),
+        "address": data.get("address"),
+        "idType": data.get("idType"),
+        "idNumber": data.get("idNumber"),
+        "photoUrl": data.get("photoUrl"),
+    }
+
+    # Update user profile
+    users.update_one(
+        {"email": email},
+        {"$set": profile_data}
+    )
+
+    return jsonify({"message": "Profile saved successfully"})
+
+
+
+# ================= GET PROFILE =================
+@app.route("/profile/<email>", methods=["GET"])
+def get_profile(email):
+    user = users.find_one({"email": email}, {"_id": 0, "password": 0})
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify(user)
+
+
+#==============Create Booking =============
+
+@app.route("/booking", methods=["POST"])
+def create_booking():
+    data = request.get_json() or {}
+
+    email = data.get("userEmail")
+    roomId = data.get("roomId")
+    checkIn = data.get("checkInDate")
+    checkOut = data.get("checkOutDate")
+
+    if not email or not roomId or not checkIn or not checkOut:
+        return jsonify({"error": "Missing fields"}), 400
+
+    booking_id = "BK-" + str(int(__import__("time").time() * 1000))
+
+    booking = {
+        "bookingId": booking_id,
+        "userEmail": email,
+        "roomId": roomId,
+        "checkInDate": checkIn,
+        "checkOutDate": checkOut,
+        "status": "CONFIRMED"
+    }
+
+    db["bookings"].insert_one(booking)
+
+    return jsonify({
+        "message": "Booking successful",
+        "booking": booking
+    })
+
+
+#==============Get Booking =============
+@app.route("/booking/<email>", methods=["GET"])
+def get_bookings(email):
+    bookings = list(db["bookings"].find(
+        {"userEmail": email},
+        {"_id": 0}
+    ))
+
+    return jsonify(bookings)
+
+
+#==============Cancel Booking =============
+@app.route("/booking/cancel", methods=["PUT"])
+def cancel_booking():
+    data = request.get_json() or {}
+
+    booking_id = data.get("bookingId")
+
+    if not booking_id:
+        return jsonify({"error": "Booking ID required"}), 400
+
+    db["bookings"].update_one(
+        {"bookingId": booking_id},
+        {"$set": {"status": "CANCELLED"}}
+    )
+
+    return jsonify({"message": "Booking cancelled"})
+
+
+
+#==============Add Room =============
+
+@app.route("/rooms", methods=["POST"])
+def add_room():
+    data = request.get_json() or {}
+
+    room = {
+        "roomId": "R-" + str(int(__import__("time").time() * 1000)),
+        "roomNumber": data.get("roomNumber"),
+        "type": data.get("type"),
+        "pricePerNight": data.get("pricePerNight"),
+        "capacity": data.get("capacity"),
+        "available": data.get("available", True),
+        "description": data.get("description"),
+        "imageUrl": data.get("imageUrl", ""),
+    }
+
+    result = db["rooms"].insert_one(room)
+
+    # ✅ Convert ObjectId to string
+    room["_id"] = str(result.inserted_id)
+
+    return jsonify({
+        "message": "Room added successfully",
+        "room": room
+    }), 201
+
+
+#==============Get all Room =============
+@app.route("/rooms", methods=["GET"])
+def get_rooms():
+    rooms = list(db["rooms"].find({}, {"_id": 0}))
+    return jsonify(rooms)
+
+#==============Get single Room =============
+@app.route("/rooms/<room_id>", methods=["GET"])
+def get_room(room_id):
+    room = db["rooms"].find_one({"roomId": room_id}, {"_id": 0})
+
+    if not room:
+        return jsonify({"error": "Room not found"}), 404
+
+    return jsonify(room)
+
+#==============Update Room =============
+@app.route("/rooms/<room_id>", methods=["PUT"])
+def update_room(room_id):
+    data = request.get_json() or {}
+
+    db["rooms"].update_one(
+        {"roomId": room_id},
+        {"$set": data}
+    )
+
+    return jsonify({"message": "Room updated"})
+
+#==============Delete Room =============
+
+@app.route("/rooms/<room_id>", methods=["DELETE"])
+def delete_room(room_id):
+    db["rooms"].delete_one({"roomId": room_id})
+    return jsonify({"message": "Room deleted"})
+
+
+#==============Create Payment=============
+
+@app.route("/payments", methods=["POST"])
+def create_payment():
+    data = request.get_json() or {}
+
+    payment = {
+        "paymentId": "PAY-" + str(int(__import__("time").time() * 1000)),
+        "bookingId": data.get("bookingId"),
+        "method": data.get("method"),
+        "transactionId": data.get("transactionId"),
+        "amount": data.get("amount", 5000),
+        "status": "SUCCESS",
+        "paidAt": __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    result = db["payments"].insert_one(payment)
+
+    # ✅ FIX: convert ObjectId to string
+    payment["_id"] = str(result.inserted_id)
+
+    return jsonify({
+        "message": "Payment successful",
+        "payment": payment
+    }), 201
+
+
+
+
+#==============GET PAYMENT BY BOOKING ID=============
+@app.route("/payments/<booking_id>", methods=["GET"])
+def get_payment(booking_id):
+    payment = db["payments"].find_one(
+        {"bookingId": booking_id},
+        {"_id": 0}   # ✅ IMPORTANT
+    )
+
+    if not payment:
+        return jsonify({"error": "Payment not found"}), 404
+
+    return jsonify(payment)
+
+
+#==============CANCEL PAYMENT=============
+@app.route("/payments/<payment_id>", methods=["PUT"])
+def cancel_payment(payment_id):
+    db["payments"].update_one(
+        {"paymentId": payment_id},
+        {"$set": {"status": "CANCELLED"}}
+    )
+
+    return jsonify({"message": "Payment cancelled"})
+
+from datetime import datetime
+
+
+#==============Create Contact =============
+
+@app.route("/contacts", methods=["POST"])
+def create_contact():
+    data = request.get_json()
+
+    name = data.get("name")
+    email = data.get("email")
+    phone = data.get("phone")
+    subject = data.get("subject")
+    message = data.get("message")
+
+    if not name or not email or not subject or not message:
+        return jsonify({"error": "All required fields missing"}), 400
+
+    new_contact = {
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "subject": subject,
+        "message": message,
+        "createdAt": datetime.utcnow()
+    }
+
+    result = contacts.insert_one(new_contact)
+
+    new_contact["_id"] = str(result.inserted_id)  # ✅ FIX ObjectId
+
+    return jsonify({
+        "message": "Message sent successfully",
+        "contact": new_contact
+    }), 201
+
+
+#==============GET ALL CONTACTS=============
+@app.route("/contacts", methods=["GET"])
+def get_contacts():
+    all_contacts = list(contacts.find())
+
+    result = []
+    for c in all_contacts:
+        c["_id"] = str(c["_id"])  # ✅ FIX ObjectId
+        result.append(c)
+
+    return jsonify(result)
+
+#==============GET CONTACT BY ID =============
+from bson import ObjectId
+
+@app.route("/contacts/<id>", methods=["GET"])
+def get_contact_by_id(id):
+    contact = contacts.find_one({"_id": ObjectId(id)})
+
+    if not contact:
+        return jsonify({"error": "Contact not found"}), 404
+
+    contact["_id"] = str(contact["_id"])  # ✅ FIX
+    return jsonify(contact)
+
+#==============DELETE CONTACT=============
+@app.route("/contacts/<id>", methods=["DELETE"])
+def delete_contact(id):
+    result = contacts.delete_one({"_id": ObjectId(id)})
+
+    if result.deleted_count == 0:
+        return jsonify({"error": "Contact not found"}), 404
+
+    return jsonify({"message": "Deleted successfully"})
+
+
+#====admin=======
+
+import bcrypt
+
+admins = db["admins"]
+
+def create_default_admin():
+    email = "admin@eliteresort.com"
+    password = "admin123"
+
+    if not admins.find_one({"email": email}):
+        hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+        admins.insert_one({
+            "email": email,
+            "password": hashed
+        })
+
+        print("✅ Default Admin Created")
+        print("Email:", email)
+        print("Password:", password)
+
+#==========Admin Login===========
+@app.route("/admin/login", methods=["POST"])
+def admin_login():
+    data = request.get_json()
+
+    email = data.get("email")
+    password = data.get("password")
+
+    admin = admins.find_one({"email": email})
+
+    if not admin:
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    if not bcrypt.checkpw(password.encode("utf-8"), admin["password"]):
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    return jsonify({
+        "message": "Login successful",
+        "token": "admin-token-demo",  # later JWT
+        "admin": {
+            "email": admin["email"]
+        }
+    })
+
+# ✅ Run this always (important for Railway)
+create_default_admin()
+
+@app.route("/")
+def home():
+    return "Backend running 🚀"
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
