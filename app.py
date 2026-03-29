@@ -107,6 +107,16 @@ def get_profile(email):
 
     return jsonify(user)
 
+#=========Delete User =========
+
+@app.route("/users/<email>", methods=["DELETE"])
+def delete_user(email):
+    result = users.delete_one({"email": email})
+
+    if result.deleted_count == 0:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify({"message": "User deleted successfully"})
 
 #==============Create Booking =============
 
