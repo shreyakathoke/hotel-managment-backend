@@ -8,6 +8,10 @@ from flask import send_from_directory
 import os
 import time
 
+import cloudinary
+import cloudinary.uploader
+
+
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -150,13 +154,15 @@ def create_booking():
             "status": "CONFIRMED"
         }
 
-        db["bookings"].insert_one(booking)
+        result = db["bookings"].insert_one(booking)
 
-        return jsonify(booking), 201  # Return the booking object directly
+        # ✅ Convert MongoDB ObjectId to string
+        booking["_id"] = str(result.inserted_id)
+
+        return jsonify(booking), 201  # Return the booking object
 
     except Exception as e:
         return jsonify({"error": "Failed to create booking", "details": str(e)}), 500
-
 
 # ================= GET BOOKINGS BY USER EMAIL =================
 @app.route("/booking/<email>", methods=["GET"])
@@ -193,20 +199,6 @@ def cancel_booking():
 
 
 
-
-
-# ✅ CLOUDINARY
-import cloudinary
-import cloudinary.uploader
-
-# ================= APP =================
-app = Flask(__name__)
-CORS(app)
-
-# ================= DATABASE =================
-client = MongoClient("mongodb://localhost:27017/")
-db = client["hotel"]
-
 # ================= CLOUDINARY CONFIG =================
 cloudinary.config(
     cloud_name="YOUR_CLOUD_NAME",
@@ -214,39 +206,58 @@ cloudinary.config(
     api_secret="YOUR_API_SECRET"
 )
 
-# ================= ADD ROOM =================
 @app.route("/rooms", methods=["POST"])
 def add_room():
     try:
-        roomNumber = request.form.get("roomNumber")
-        type_ = request.form.get("type")
-        price = request.form.get("pricePerNight")
-        capacity = request.form.get("capacity")
-        description = request.form.get("description")
+        # Determine if request is JSON or form-data
+        if request.is_json:
+            data = request.get_json()
+            roomNumber = data.get("roomNumber")
+            type_ = data.get("type")
+            price = data.get("pricePerNight")
+            capacity = data.get("capacity")
+            description = data.get("description")
+            image_url = data.get("imageUrl", "")
+        else:
+            roomNumber = request.form.get("roomNumber")
+            type_ = request.form.get("type")
+            price = request.form.get("pricePerNight")
+            capacity = request.form.get("capacity")
+            description = request.form.get("description")
+            file = request.files.get("image")
+            image_url = ""
+            if file:
+                result = cloudinary.uploader.upload(file)
+                image_url = result.get("secure_url", "")
 
-        file = request.files.get("image")
+        # Validate required fields
+        if not roomNumber or not type_ or not price or not capacity:
+            return jsonify({"error": "roomNumber, type, pricePerNight, and capacity are required"}), 400
 
-        image_url = ""
+        # Convert price and capacity to integers safely
+        try:
+            price = int(price)
+            capacity = int(capacity)
+        except ValueError:
+            return jsonify({"error": "pricePerNight and capacity must be numbers"}), 400
 
-        # ✅ Upload to Cloudinary
-        if file:
-            result = cloudinary.uploader.upload(file)
-            image_url = result["secure_url"]
-
+        # Create room object
         room = {
             "roomId": "R-" + str(int(time.time() * 1000)),
             "roomNumber": roomNumber,
             "type": type_,
-            "pricePerNight": int(price),
-            "capacity": int(capacity),
+            "pricePerNight": price,
+            "capacity": capacity,
             "available": True,
             "description": description,
             "imageUrl": image_url
         }
 
-        db["rooms"].insert_one(room)
+        # Insert into DB
+        result = db["rooms"].insert_one(room)
+        room["_id"] = str(result.inserted_id)
 
-        return jsonify({"message": "Room added", "room": room}), 201
+        return jsonify({"message": "Room added successfully", "room": room}), 201
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -290,14 +301,6 @@ def delete_room(room_id):
     return jsonify({"message": "Room deleted"})
 
 
-
-
-
-# ================= DELETE ROOM =================
-@app.route("/rooms/<room_id>", methods=["DELETE"])
-def delete_room(room_id):
-    db["rooms"].delete_one({"roomId": room_id})
-    return jsonify({"message": "Room deleted"})
 
 #==============Create Payment=============
 
@@ -427,7 +430,7 @@ def delete_contact(id):
 
 #====admin=======
 
-import bcrypt
+
 
 admins = db["admins"]
 
@@ -446,6 +449,7 @@ def create_default_admin():
         print("✅ Default Admin Created")
         print("Email:", email)
         print("Password:", password)
+
 
 #==========Admin Login===========
 @app.route("/admin/login", methods=["POST"])
@@ -471,7 +475,7 @@ def admin_login():
         }
     })
 
-# ✅ Run this always (important for Railway)
+
 create_default_admin()
 
 @app.route("/")
