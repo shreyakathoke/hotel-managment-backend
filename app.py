@@ -165,14 +165,14 @@ def create_booking():
         return jsonify({"error": "Failed to create booking", "details": str(e)}), 500
 
 # ================= GET BOOKINGS BY USER EMAIL =================
-@app.route("/booking/<email>", methods=["GET"])
-def get_bookings(email):
+# GET ALL BOOKINGS
+@app.route("/booking", methods=["GET"])
+def get_all_bookings():
     try:
-        bookings = list(db["bookings"].find({"userEmail": email}, {"_id": 0}))
+        bookings = list(db["bookings"].find({}, {"_id": 0}))  # remove MongoDB _id
         return jsonify(bookings), 200
     except Exception as e:
         return jsonify({"error": "Failed to fetch bookings", "details": str(e)}), 500
-
 
 # ================= CANCEL BOOKING =================
 @app.route("/booking/cancel", methods=["PUT"])
