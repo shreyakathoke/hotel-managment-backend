@@ -4,6 +4,13 @@ from pymongo import MongoClient
 from config import Config
 import bcrypt
 import os
+from flask import send_from_directory
+import os
+import time
+
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 
 
 app = Flask(__name__)
@@ -11,7 +18,7 @@ CORS(app)
 
 # MongoDB connection
 client = MongoClient(Config.MONGO_URI)
-db = client.get_database()   # auto from URI
+db = client.get_database()   
 users = db["users"]
 
 contacts = db["contacts"]
@@ -181,41 +188,65 @@ def cancel_booking():
 
 
 
-#==============Add Room =============
 
+
+# ================= CONFIG =================
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# ================= SERVE IMAGES =================
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
+# ================= ADD ROOM =================
 @app.route("/rooms", methods=["POST"])
 def add_room():
-    data = request.get_json() or {}
+    try:
+        roomNumber = request.form.get("roomNumber")
+        type_ = request.form.get("type")
+        price = request.form.get("pricePerNight")
+        capacity = request.form.get("capacity")
+        description = request.form.get("description")
 
-    room = {
-        "roomId": "R-" + str(int(__import__("time").time() * 1000)),
-        "roomNumber": data.get("roomNumber"),
-        "type": data.get("type"),
-        "pricePerNight": data.get("pricePerNight"),
-        "capacity": data.get("capacity"),
-        "available": data.get("available", True),
-        "description": data.get("description"),
-        "imageUrl": data.get("imageUrl", ""),
-    }
+        file = request.files.get("image")
 
-    result = db["rooms"].insert_one(room)
+        image_path = ""
 
-    # ✅ Convert ObjectId to string
-    room["_id"] = str(result.inserted_id)
+        if file:
+            filename = f"{int(time.time())}_{file.filename}"
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(filepath)
 
-    return jsonify({
-        "message": "Room added successfully",
-        "room": room
-    }), 201
+            image_path = f"/uploads/{filename}"
+
+        room = {
+            "roomId": "R-" + str(int(time.time() * 1000)),
+            "roomNumber": roomNumber,
+            "type": type_,
+            "pricePerNight": int(price),
+            "capacity": int(capacity),
+            "available": True,
+            "description": description,
+            "imageUrl": image_path
+        }
+
+        db["rooms"].insert_one(room)
+
+        return jsonify({"message": "Room added", "room": room}), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-#==============Get all Room =============
+# ================= GET ALL ROOMS =================
 @app.route("/rooms", methods=["GET"])
 def get_rooms():
     rooms = list(db["rooms"].find({}, {"_id": 0}))
     return jsonify(rooms)
 
-#==============Get single Room =============
+
+# ================= GET SINGLE ROOM =================
 @app.route("/rooms/<room_id>", methods=["GET"])
 def get_room(room_id):
     room = db["rooms"].find_one({"roomId": room_id}, {"_id": 0})
@@ -225,7 +256,8 @@ def get_room(room_id):
 
     return jsonify(room)
 
-#==============Update Room =============
+
+# ================= UPDATE ROOM =================
 @app.route("/rooms/<room_id>", methods=["PUT"])
 def update_room(room_id):
     data = request.get_json() or {}
@@ -237,13 +269,12 @@ def update_room(room_id):
 
     return jsonify({"message": "Room updated"})
 
-#==============Delete Room =============
 
+# ================= DELETE ROOM =================
 @app.route("/rooms/<room_id>", methods=["DELETE"])
 def delete_room(room_id):
     db["rooms"].delete_one({"roomId": room_id})
     return jsonify({"message": "Room deleted"})
-
 
 #==============Create Payment=============
 
