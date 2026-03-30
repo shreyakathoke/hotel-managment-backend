@@ -12,8 +12,7 @@ import cloudinary
 import cloudinary.uploader
 
 
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 
 
 
@@ -198,6 +197,12 @@ def cancel_booking():
         return jsonify({"error": "Failed to cancel booking", "details": str(e)}), 500
 
 
+#image upload
+UPLOAD_FOLDER = "uploads"
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 # ================= CLOUDINARY CONFIG =================
 cloudinary.config(
