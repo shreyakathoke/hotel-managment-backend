@@ -125,79 +125,94 @@ def delete_user(email):
 
     return jsonify({"message": "User deleted successfully"})
 
-#==============Create Booking =============
-
+# ================= CREATE BOOKING =================
 @app.route("/booking", methods=["POST"])
 def create_booking():
-    data = request.get_json() or {}
+    try:
+        data = request.get_json(force=True) or {}
 
-    email = data.get("userEmail")
-    roomId = data.get("roomId")
-    checkIn = data.get("checkInDate")
-    checkOut = data.get("checkOutDate")
+        email = data.get("userEmail")
+        roomId = data.get("roomId")
+        checkIn = data.get("checkInDate")
+        checkOut = data.get("checkOutDate")
 
-    if not email or not roomId or not checkIn or not checkOut:
-        return jsonify({"error": "Missing fields"}), 400
+        if not email or not roomId or not checkIn or not checkOut:
+            return jsonify({"error": "Missing required fields"}), 400
 
-    booking_id = "BK-" + str(int(__import__("time").time() * 1000))
+        booking_id = "BK-" + str(int(time.time() * 1000))
 
-    booking = {
-        "bookingId": booking_id,
-        "userEmail": email,
-        "roomId": roomId,
-        "checkInDate": checkIn,
-        "checkOutDate": checkOut,
-        "status": "CONFIRMED"
-    }
+        booking = {
+            "bookingId": booking_id,
+            "userEmail": email,
+            "roomId": roomId,
+            "checkInDate": checkIn,
+            "checkOutDate": checkOut,
+            "status": "CONFIRMED"
+        }
 
-    db["bookings"].insert_one(booking)
+        db["bookings"].insert_one(booking)
 
-    return jsonify({
-        "message": "Booking successful",
-        "booking": booking
-    })
+        return jsonify(booking), 201  # Return the booking object directly
+
+    except Exception as e:
+        return jsonify({"error": "Failed to create booking", "details": str(e)}), 500
 
 
-#==============Get Booking =============
+# ================= GET BOOKINGS BY USER EMAIL =================
 @app.route("/booking/<email>", methods=["GET"])
 def get_bookings(email):
-    bookings = list(db["bookings"].find(
-        {"userEmail": email},
-        {"_id": 0}
-    ))
+    try:
+        bookings = list(db["bookings"].find({"userEmail": email}, {"_id": 0}))
+        return jsonify(bookings), 200
+    except Exception as e:
+        return jsonify({"error": "Failed to fetch bookings", "details": str(e)}), 500
 
-    return jsonify(bookings)
 
-
-#==============Cancel Booking =============
+# ================= CANCEL BOOKING =================
 @app.route("/booking/cancel", methods=["PUT"])
 def cancel_booking():
-    data = request.get_json() or {}
+    try:
+        data = request.get_json(force=True) or {}
+        booking_id = data.get("bookingId")
 
-    booking_id = data.get("bookingId")
+        if not booking_id:
+            return jsonify({"error": "Booking ID required"}), 400
 
-    if not booking_id:
-        return jsonify({"error": "Booking ID required"}), 400
+        result = db["bookings"].update_one(
+            {"bookingId": booking_id},
+            {"$set": {"status": "CANCELLED"}}
+        )
 
-    db["bookings"].update_one(
-        {"bookingId": booking_id},
-        {"$set": {"status": "CANCELLED"}}
-    )
+        if result.matched_count == 0:
+            return jsonify({"error": "Booking not found"}), 404
 
-    return jsonify({"message": "Booking cancelled"})
+        return jsonify({"message": "Booking cancelled"}), 200
 
-
-
+    except Exception as e:
+        return jsonify({"error": "Failed to cancel booking", "details": str(e)}), 500
 
 
-# ================= CONFIG =================
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ================= SERVE IMAGES =================
-@app.route("/uploads/<filename>")
-def uploaded_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+# ✅ CLOUDINARY
+import cloudinary
+import cloudinary.uploader
+
+# ================= APP =================
+app = Flask(__name__)
+CORS(app)
+
+# ================= DATABASE =================
+client = MongoClient("mongodb://localhost:27017/")
+db = client["hotel"]
+
+# ================= CLOUDINARY CONFIG =================
+cloudinary.config(
+    cloud_name="YOUR_CLOUD_NAME",
+    api_key="YOUR_API_KEY",
+    api_secret="YOUR_API_SECRET"
+)
 
 # ================= ADD ROOM =================
 @app.route("/rooms", methods=["POST"])
@@ -211,14 +226,12 @@ def add_room():
 
         file = request.files.get("image")
 
-        image_path = ""
+        image_url = ""
 
+        # ✅ Upload to Cloudinary
         if file:
-            filename = f"{int(time.time())}_{file.filename}"
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(filepath)
-
-            image_path = f"/uploads/{filename}"
+            result = cloudinary.uploader.upload(file)
+            image_url = result["secure_url"]
 
         room = {
             "roomId": "R-" + str(int(time.time() * 1000)),
@@ -228,7 +241,7 @@ def add_room():
             "capacity": int(capacity),
             "available": True,
             "description": description,
-            "imageUrl": image_path
+            "imageUrl": image_url
         }
 
         db["rooms"].insert_one(room)
@@ -268,6 +281,16 @@ def update_room(room_id):
     )
 
     return jsonify({"message": "Room updated"})
+
+
+# ================= DELETE ROOM =================
+@app.route("/rooms/<room_id>", methods=["DELETE"])
+def delete_room(room_id):
+    db["rooms"].delete_one({"roomId": room_id})
+    return jsonify({"message": "Room deleted"})
+
+
+
 
 
 # ================= DELETE ROOM =================
