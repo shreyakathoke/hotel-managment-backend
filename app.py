@@ -7,6 +7,8 @@ import os
 from flask import send_from_directory
 import os
 import time
+from flask_mail import Mail, Message
+from datetime import datetime
 
 import cloudinary
 import cloudinary.uploader
@@ -17,7 +19,14 @@ import cloudinary.uploader
 
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:5173",
+            "https://hotel-managment-website.vercel.app"
+        ]
+    }
+})
 
 # MongoDB connection
 client = MongoClient(Config.MONGO_URI)
@@ -365,6 +374,15 @@ from datetime import datetime
 
 #==============Create Contact =============
 
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = 'shreyakathoke01@gmail.com'
+app.config['MAIL_PASSWORD'] = 'dhfcefrrclmoqonp'
+
+mail = Mail(app)
+
+
 @app.route("/contacts", methods=["POST"])
 def create_contact():
     data = request.get_json()
@@ -378,6 +396,7 @@ def create_contact():
     if not name or not email or not subject or not message:
         return jsonify({"error": "All required fields missing"}), 400
 
+    # Save to DB
     new_contact = {
         "name": name,
         "email": email,
@@ -388,11 +407,39 @@ def create_contact():
     }
 
     result = contacts.insert_one(new_contact)
+    new_contact["_id"] = str(result.inserted_id)
 
-    new_contact["_id"] = str(result.inserted_id)  # ✅ FIX ObjectId
+    # ✅ SEND EMAIL TO YOU
+    try:
+        msg = Message(
+            subject=f"New Contact: {subject}",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=["support@eliteresort.com"],
+            body=f"""
+Name: {name}
+Email: {email}
+Phone: {phone}
+
+Message:
+{message}
+            """
+        )
+        mail.send(msg)
+
+        # ✅ SEND CONFIRMATION TO USER (optional)
+        reply = Message(
+            subject="We received your message",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=[email],
+            body=f"Hi {name},\n\nWe received your message. We will contact you soon."
+        )
+        mail.send(reply)
+
+    except Exception as e:
+        print("Email Error:", e)
 
     return jsonify({
-        "message": "Message sent successfully",
+        "message": "Message sent successfully ✅",
         "contact": new_contact
     }), 201
 
