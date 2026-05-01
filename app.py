@@ -27,6 +27,12 @@ CORS(app, resources={
         ]
     }
 })
+@app.after_request
+def after_request(response):
+    response.headers["Access-Control-Allow-Origin"] = "https://hotel-managment-website.vercel.app"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+    return response
 
 # MongoDB connection
 client = MongoClient(Config.MONGO_URI)
